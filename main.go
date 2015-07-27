@@ -1,9 +1,9 @@
 /* stickypipe agent
 Takes environment variables:
-	SWITCHES="192.168.30.1,c2960g,nexus5k-top"
-	COMMUNITY="public"
-	CONSUMERSECRET="Bof7aire/Pangeib8yaxum4Ai"
-	CONSUMERID="Ah1IezaiYaf3Tau3Eig4quaijie0Ik7R"
+  // End points are our devices such as a network switch.
+	SP_ENDPOINTS="192.168.30.1,c2960g,nexus5k-top"
+	// Credentials are our logins to the endpoints.
+	SP_ENDPOINT_CREDENTIALS="public"
 
 then pipes the output up to sitckypipe in a JSON based string:
 { name: c2960g, interface-id: 1733017, interface-name: GigabitEthernet0/10, interface-in: 3866362551, interface-out: 345343003, timestamp: 1438023632  }
@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/alouca/gosnmp"
+	"github.com/joeshaw/envdecode"
 )
 
 type ifMessage struct {
@@ -34,13 +35,19 @@ var wg sync.WaitGroup
 var mutex sync.Mutex
 
 func handleError(err error) {
-	fmt.Println("error in output")
-	log.Fatal(err)
+	fmt.Println("error:", err)
 }
 
-//func walkValue(s *gosnmp.GoSNMP, oid string, key string, m map[string]map[string]string) {
-func walkValue(oid string, key string, m map[string]map[string]string) {
-	s, err := gosnmp.NewGoSNMP("10.93.234.5", "public", gosnmp.Version2c, 5)
+/* walkvalues:
+ Arguments:
+	server - like a switch (10.93.234.2, or c2960-001, or something like that. )
+  creds - this is the SNMP community string (public, 234jfj23vjA233kj3, etc)
+	oid - the OID we're going to walk through
+	key - the key we want to store the individual values
+	map - the map that we want to store this in.
+*/
+func walkValue(server string, creds string, oid string, key string, m map[string]map[string]string) {
+	s, err := gosnmp.NewGoSNMP(server, creds, gosnmp.Version2c, 5)
 	if err != nil {
 		handleError(err)
 		return
@@ -96,6 +103,21 @@ func getHostname(s *gosnmp.GoSNMP) {
 }
 
 func main() {
+	// We require each program to have endpoints defined.
+	var params struct {
+		Endpoints   string `env:"SP_ENDPOINTS,required"`
+		Credentials string `env:"SP_ENDPOINT_CREDENTIALS,required"`
+	}
+
+	if err := envdecode.Decode(&params); err != nil {
+		log.Fatalln(err)
+	}
+
+	endpoints := strings.Split(params.Endpoints, ",")
+	creds := strings.Split(params.Credentials, ",")
+	if len(endpoints) != len(creds) {
+		log.Fatal("Each endpoint should have a corresponding credential")
+	}
 
 	// All the OIDs we'll snmp walk through to get
 	oidWork := map[string]string{
@@ -107,25 +129,29 @@ func main() {
 		".1.3.6.1.2.1.31.1.1.1.10": "ifHCOutOctets",
 		".1.3.6.1.2.1.31.1.1.1.15": "ifHighSpeed",
 	}
-
-	// mapping hash table for interface names.
 	m := make(map[string]map[string]string)
-	wg.Add(len(oidWork))
 
-	// concurrently execute all of the snmp walks
-	for oid, name := range oidWork {
-		go func(o string, n string) {
+	// go through each device and grab the counters.
+	wg.Add(len(endpoints))
+	for i, endpoint := range endpoints {
+		go func(e string, c string) {
 			defer wg.Done()
-			walkValue(o, n, m)
-		}(oid, name)
-	}
+			// mapping hash table for interface names.
+			wg.Add(len(oidWork))
+			// concurrently execute all of the snmp walks
+			for oid, name := range oidWork {
+				go func(o string, n string) {
+					defer wg.Done()
+					walkValue(e, c, o, n, m)
+				}(oid, name)
+			}
 
+		}(endpoint, creds[i])
+	}
 	// wait for all the snmpwalks to finish.
 	wg.Wait()
-
 	// now we have all the walks, let's push it up.
 	for k, v := range m {
 		log.Printf("Key: %s / Value: %s", k, v)
 	}
-
 }
