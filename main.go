@@ -133,7 +133,8 @@ func main() {
 	go func() {
 		<-signalChan
 		stop = true
-		log.Println("Cleaning up... this could take 30 seconds.  Sorry.  Please be patient")
+		// TODO: This delay really sucks.  Fix this using a channel.
+		log.Println("Cleaning up... this could take 60 seconds.  Sorry.  Please be patient")
 	}()
 	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
 

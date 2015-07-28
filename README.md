@@ -22,10 +22,23 @@ SP_ENDPOINT_CREDENTIALS="public,public"
 
 To run the container: 
 ```
-docker run -it -e SP_ENDPOINTS="10.93.234.2,10.93.234.5" \
+docker run -d -e SP_ENDPOINTS="10.93.234.2,10.93.234.5" \
        -e SP_ENDPOINT_CREDENTIALS="public,public" \
+       --name stickypipe
        vallard/stickypipe-agent
 ```
+To run to test to see the output: 
+```
+docker run --rm -it -e SP_ENDPOINTS="10.93.234.2,10.93.234.5" \
+       -e SP_ENDPOINT_CREDENTIALS="public,public" \
+       --name stickypipe
+       vallard/stickypipe-agent
+```
+To connect to it while its running
+```
+docker exec -it stickypipe /bin/bash
+```
+
 
 ### Building the Container
 Pretty simple... 
