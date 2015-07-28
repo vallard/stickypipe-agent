@@ -135,6 +135,8 @@ func main() {
 		stop = true
 		// TODO: This delay really sucks.  Fix this using a channel.
 		log.Println("Cleaning up... this could take 60 seconds.  Sorry.  Please be patient")
+		// send stuff on the channel until it closes.
+
 	}()
 	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
 
@@ -166,9 +168,18 @@ func main() {
 		}
 		// wait for all the snmpwalks to finish.
 		mainWg.Wait()
+
 		// now sleep for a while and then run again.
-		fmt.Println("Sleeping for 60 seconds...")
-		time.Sleep(60 * time.Second)
+		timeoutchan := make(chan bool)
+		go func() {
+			fmt.Println("Sleeping for 60 seconds...")
+			<-time.After(60 * time.Second)
+			timeoutchan <- true
+		}()
+		select {
+		case <-timeoutchan:
+			break
+		}
 	}
 }
 
