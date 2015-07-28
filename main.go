@@ -17,6 +17,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/alouca/gosnmp"
 	"github.com/joeshaw/envdecode"
@@ -31,7 +32,6 @@ type ifMessage struct {
 	ts         string
 }
 
-var wg sync.WaitGroup
 var mutex sync.Mutex
 
 func handleError(err error) {
@@ -72,7 +72,7 @@ func walkValue(server string, creds string, oid string, key string, m map[string
 			default:
 				value = "decode this"
 			}
-			fmt.Printf("%s / %s\n", key, value)
+			//fmt.Printf("%s / %s\n", key, value)
 			mutex.Lock()
 			{
 				if m[ifIndex] != nil {
@@ -83,21 +83,6 @@ func walkValue(server string, creds string, oid string, key string, m map[string
 			}
 			mutex.Unlock()
 		}
-	}
-
-}
-
-func getHostname(s *gosnmp.GoSNMP) {
-	resp, err := s.Get(".1.3.6.1.2.1.1.5.0")
-	if err == nil {
-		for _, v := range resp.Variables {
-			switch v.Type {
-			case gosnmp.OctetString:
-				log.Printf("Response: %s : %s : %s \n", v.Name, v.Value.(string), v.Type.String())
-			}
-		}
-	} else {
-		log.Fatal(err)
 	}
 
 }
@@ -121,7 +106,7 @@ func main() {
 
 	// All the OIDs we'll snmp walk through to get
 	oidWork := map[string]string{
-		".1.3.6.1.2.1.1.5.0":       "sysName",
+		".1.3.6.1.2.1.1.5":         "sysName",
 		".1.3.6.1.2.1.2.2.1.2":     "name",
 		".1.3.6.1.2.1.2.2.1.10":    "ifInOctets",
 		".1.3.6.1.2.1.2.2.1.16":    "ifOutOctets",
@@ -129,29 +114,65 @@ func main() {
 		".1.3.6.1.2.1.31.1.1.1.10": "ifHCOutOctets",
 		".1.3.6.1.2.1.31.1.1.1.15": "ifHighSpeed",
 	}
-	m := make(map[string]map[string]string)
+
+	// The main waitgroup for each switch waits for
+	// each switch to finish its job.
+	var mainWg sync.WaitGroup
+	// The array of waitgroups are the jobs that each
+	// switch must proccess.
+	wg := make([]sync.WaitGroup, len(endpoints))
+
+	// make sure we wait for each of the switches
+	mainWg.Add(len(endpoints))
 
 	// go through each device and grab the counters.
-	wg.Add(len(endpoints))
 	for i, endpoint := range endpoints {
-		go func(e string, c string) {
-			defer wg.Done()
+		m := make(map[string]map[string]string)
+		go func(e string, c string, w sync.WaitGroup) {
+			defer mainWg.Done()
 			// mapping hash table for interface names.
-			wg.Add(len(oidWork))
+			w.Add(len(oidWork))
 			// concurrently execute all of the snmp walks
 			for oid, name := range oidWork {
 				go func(o string, n string) {
-					defer wg.Done()
+					defer w.Done()
 					walkValue(e, c, o, n, m)
 				}(oid, name)
 			}
-
-		}(endpoint, creds[i])
+			w.Wait()
+			processCollectedData(m)
+		}(endpoint, creds[i], wg[i])
 	}
 	// wait for all the snmpwalks to finish.
-	wg.Wait()
+	mainWg.Wait()
 	// now we have all the walks, let's push it up.
+}
+
+// take all the data we were given and format it to JSON to send up
+// to the server.
+func processCollectedData(m map[string]map[string]string) {
+	// get the name of the switch:
+	sw := m["0"]["sysName"]
+	// get the timestamp
+	now := time.Now()
+
+	sendMap := make(map[string][]string)
+	var sendStrings []string
+	//go through each switch for k, v := range m {
 	for k, v := range m {
-		log.Printf("Key: %s / Value: %s", k, v)
+		sendMe := fmt.Sprintf("'switch':'%s', 'ifName':'%s','timeStamp':'%d','ifInOctets':'%s', 'ifHCInOctets': '%s', 'ifOutOctets': '%s', 'ifHCOutOctets': '%s', 'ifHighSpeed': '%s', 'ifId': '%s'\n",
+			sw,
+			v["name"],
+			now.Unix(),
+			v["ifInOctets"],
+			v["ifHCInOctets"],
+			v["ifOutOctets"],
+			v["ifHCOutOctets"],
+			v["ifHighSpeed"],
+			k)
+
+		sendStrings = append(sendStrings, sendMe)
 	}
+	sendMap[sw] = sendStrings
+	fmt.Println(sendMap)
 }
