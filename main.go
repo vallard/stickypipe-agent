@@ -15,8 +15,11 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/alouca/gosnmp"
@@ -122,30 +125,50 @@ func main() {
 	// switch must proccess.
 	wg := make([]sync.WaitGroup, len(endpoints))
 
-	// make sure we wait for each of the switches
-	mainWg.Add(len(endpoints))
+	// we will run in a continuous loop forever!
+	// or at least until the user hits ctrl-c or we get a signal interrupt.
+	stop := false
+	signalChan := make(chan os.Signal, 1)
 
-	// go through each device and grab the counters.
-	for i, endpoint := range endpoints {
-		m := make(map[string]map[string]string)
-		go func(e string, c string, w sync.WaitGroup) {
-			defer mainWg.Done()
-			// mapping hash table for interface names.
-			w.Add(len(oidWork))
-			// concurrently execute all of the snmp walks
-			for oid, name := range oidWork {
-				go func(o string, n string) {
-					defer w.Done()
-					walkValue(e, c, o, n, m)
-				}(oid, name)
-			}
-			w.Wait()
-			processCollectedData(m)
-		}(endpoint, creds[i], wg[i])
+	go func() {
+		<-signalChan
+		stop = true
+		log.Println("Cleaning up... this could take 30 seconds.  Sorry.  Please be patient")
+	}()
+	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
+
+	for {
+
+		if stop {
+			break
+		}
+		// make sure we wait for each of the switches
+		mainWg.Add(len(endpoints))
+
+		// go through each device and grab the counters.
+		for i, endpoint := range endpoints {
+			m := make(map[string]map[string]string)
+			go func(e string, c string, w sync.WaitGroup) {
+				defer mainWg.Done()
+				// mapping hash table for interface names.
+				w.Add(len(oidWork))
+				// concurrently execute all of the snmp walks
+				for oid, name := range oidWork {
+					go func(o string, n string) {
+						defer w.Done()
+						walkValue(e, c, o, n, m)
+					}(oid, name)
+				}
+				w.Wait()
+				processCollectedData(m)
+			}(endpoint, creds[i], wg[i])
+		}
+		// wait for all the snmpwalks to finish.
+		mainWg.Wait()
+		// now sleep for a while and then run again.
+		fmt.Println("Sleeping for 60 seconds...")
+		time.Sleep(60 * time.Second)
 	}
-	// wait for all the snmpwalks to finish.
-	mainWg.Wait()
-	// now we have all the walks, let's push it up.
 }
 
 // take all the data we were given and format it to JSON to send up
