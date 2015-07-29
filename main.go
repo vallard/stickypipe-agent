@@ -129,14 +129,13 @@ func main() {
 	// or at least until the user hits ctrl-c or we get a signal interrupt.
 	stop := false
 	signalChan := make(chan os.Signal, 1)
-
+	interruptChan := make(chan struct{}, 1)
 	go func() {
 		<-signalChan
 		stop = true
-		// TODO: This delay really sucks.  Fix this using a channel.
-		log.Println("Cleaning up... this could take 60 seconds.  Sorry.  Please be patient")
-		// send stuff on the channel until it closes.
-
+		log.Println("Cleaning up...")
+		// send stuff to the channel so that it closes.  That way we don't have to wait so long.
+		interruptChan <- struct{}{}
 	}()
 	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
 
@@ -179,6 +178,10 @@ func main() {
 		select {
 		case <-timeoutchan:
 			break
+		case <-interruptChan:
+			// close the channel so other threads will stop blocking and finish.
+			close(interruptChan)
+			break
 		}
 	}
 }
@@ -195,6 +198,10 @@ func processCollectedData(m map[string]map[string]string) {
 	var sendStrings []string
 	//go through each switch for k, v := range m {
 	for k, v := range m {
+		// don't send if there is no data to send.
+		if emptyValues(v) {
+			continue
+		}
 		sendMe := fmt.Sprintf("'switch':'%s', 'ifName':'%s','timeStamp':'%d','ifInOctets':'%s', 'ifHCInOctets': '%s', 'ifOutOctets': '%s', 'ifHCOutOctets': '%s', 'ifHighSpeed': '%s', 'ifId': '%s'\n",
 			sw,
 			v["name"],
@@ -210,4 +217,27 @@ func processCollectedData(m map[string]map[string]string) {
 	}
 	sendMap[sw] = sendStrings
 	fmt.Println(sendMap)
+}
+
+// see if any of the values are empty.
+func emptyValues(v map[string]string) bool {
+	if v["name"] == "" {
+		return true
+	}
+	if v["ifInOctets"] == "" {
+		return true
+	}
+	if v["ifHCInOctets"] == "" {
+		return true
+	}
+	if v["ifOutOctets"] == "" {
+		return true
+	}
+	if v["ifHCOutOctets"] == "" {
+		return true
+	}
+	if v["ifHighSpeed"] == "" {
+		return true
+	}
+	return false
 }
