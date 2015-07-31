@@ -9,28 +9,37 @@ Several environment variables are necessary for you to run:
 
 #### SP_ENDPOINTS
 Comma seperated list of switches that we want to collect stats from.  
+Each switch should be followed with a :<METHOD> tag to tell the agent how to 
+connect to it: 
+
 ```
-SP_ENDPOINTS="10.93.234.2,c2960-001"
+SP_ENDPOINTS="10.93.234.2:SNMP,10.93.234.5:SNMP,10.94.238.122:NXAPI"
 ```
+
+Current Methods:
+* SNMP (this is only v2)
+* NXAPI
+
 
 #### SP_ENDPOINT_CREDENTIALS
 Comma seperated list of passwords/community strings.  Even if they are all the same
 they should match the number SP_ENDPOINTS.  
 ```
-SP_ENDPOINT_CREDENTIALS="public,public"
+export SP_ENDPOINT_CREDENTIALS="public,public,admin:cisco"
 ```
+In the above example we have two public community strings for SNMP and a user/password for NXAPI
 
 To run the container: 
 ```
-docker run -d -e SP_ENDPOINTS="10.93.234.2,10.93.234.5" \
+docker run -d -e SP_ENDPOINTS="10.93.234.2:SNMP,10.93.234.5:SNMP" \
        -e SP_ENDPOINT_CREDENTIALS="public,public" \
        --name stickypipe
        vallard/stickypipe-agent
 ```
 To run to test to see the output: 
 ```
-docker run --rm -it -e SP_ENDPOINTS="10.93.234.2,10.93.234.5" \
-       -e SP_ENDPOINT_CREDENTIALS="public,public" \
+docker run --rm -it -e SP_ENDPOINTS="10.93.234.2:SNMP,10.93.234.5:SNMP,10.93.238.211:NXAPI" \
+       -e SP_ENDPOINT_CREDENTIALS="public,public,admin:password" \
        --name stickypipe
        vallard/stickypipe-agent
 ```

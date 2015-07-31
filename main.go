@@ -13,8 +13,12 @@ then pipes the output up to sitckypipe in a JSON based string:
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -22,23 +26,139 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alouca/gosnmp"
 	"github.com/joeshaw/envdecode"
+	"github.com/vallard/gosnmp"
+	"github.com/vallard/stickypipe-agent/nxapi"
 )
 
-type ifMessage struct {
-	switchName string
-	id         string
-	name       string
-	in         int
-	out        int
-	ts         string
+/* These structures show the type of response we get back from
+The NXAPI.  This could be quite big.  The Output is the same up until the
+body.  That is where the outputs differ depending on which command is given.
+*/
+type NXAPI_Response struct {
+	Ins_api Ins_API
+}
+
+type Ins_API struct {
+	Type    string
+	Version string
+	Sid     string
+	Outputs map[string]Output
+}
+
+type Output struct {
+	Input string
+	Msg   string
+	Code  string
+	Body  map[string]interface{}
+}
+
+/*
+The following 3 structures are for our commands we send
+To the Nexus Switches
+*/
+type NXAPI_Post struct {
+	Ins_api NXAPI_Data
+}
+
+type NXAPI_Data struct {
+	Version       string
+	Type          string
+	Chunk         string
+	Sid           string
+	Input         string
+	Output_Format string
+}
+
+func NewNXAPIPost(command string) NXAPI_Post {
+	n := NXAPI_Post{
+		Ins_api: NXAPI_Data{
+			Version:       "1.0",
+			Type:          "cli_show",
+			Sid:           "1",
+			Chunk:         "0",
+			Input:         command,
+			Output_Format: "json",
+		},
+	}
+	return n
 }
 
 var mutex sync.Mutex
 
 func handleError(err error) {
 	fmt.Println("error:", err)
+}
+
+/* Get NXAPI information
+Arguments:
+ server - Nexus Switch (10.93.234.2, sw001, or something reachable)
+ creds - user/password pair that looks like admin:cisco (notice no :'s are supported in the password.)
+ map - map we want to store this stuff.
+*/
+
+func getNXAPIData(server string, command string, outputName string, creds string, m map[string]map[string]string) {
+	// argument for string looks like: admin:cisco where admin is the user and cisco is the password.
+	up := strings.Split(creds, ":")
+	// make sure that we parsed the username and password.
+	if len(up) < 2 {
+		log.Fatal("Credentials must be of form user:password")
+		return
+	}
+	// The command we run to get the port interface statistics.
+	/*
+		nxcmd := NewNXAPIPost(command)
+		fmt.Println(nxcmd)
+		jsonStr, err := json.Marshal(nxcmd)
+	*/
+	var jsonStr = []byte(`{
+					"ins_api": {
+							"version":       "1.0",
+							"type":          "cli_show",
+							"chunk":         "0",
+							"sid":           "1",
+							"input":         "` + command + `",
+							"output_format": "json",
+						}
+					}
+						`)
+	// Start formatting our HTTP POST request.
+	req, err := http.NewRequest("POST", "http://"+server+"/ins", bytes.NewBuffer(jsonStr))
+	if err != nil {
+		log.Println("HTTP Post: ", err)
+	}
+	// The header has to be set to application/json
+	req.Header.Set("content-type", "application/json")
+	// add the username and password to the header.
+	req.SetBasicAuth(up[0], up[1])
+
+	// create a new http client to execute the request.
+	client := &http.Client{}
+	// execute the request.
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatal("response error: ", err)
+	}
+	defer resp.Body.Close()
+
+	//fmt.Println("response Status: ", resp.Status)
+	//fmt.Println("response Headers: ", resp.Header)
+	body, err := ioutil.ReadAll(resp.Body)
+	//fmt.Println("responseBody:", string(body))
+	var rr NXAPI_Response
+	//var rr interface{}
+	err = json.Unmarshal(body, &rr)
+	if err != nil {
+		log.Fatal("Error unmarshalling: ", err)
+	}
+	// Print out the raw string to debug.
+
+	//fmt.Println(rr)
+	outputs := rr.Ins_api.Outputs
+	fmt.Println(outputs)
+
+	v := nxapi.Version
+	fmt.Println(v)
 }
 
 /* walkvalues:
@@ -87,6 +207,7 @@ func walkValue(server string, creds string, oid string, key string, m map[string
 			mutex.Unlock()
 		}
 	}
+	s.Close()
 
 }
 
@@ -116,6 +237,12 @@ func main() {
 		".1.3.6.1.2.1.31.1.1.1.6":  "ifHCInOctets",
 		".1.3.6.1.2.1.31.1.1.1.10": "ifHCOutOctets",
 		".1.3.6.1.2.1.31.1.1.1.15": "ifHighSpeed",
+	}
+
+	// all the commands we walk through NXAPI to get.
+	nxapiWork := map[string]string{
+		"show version":            "version",
+		"show interface counters": "counters",
 	}
 
 	// The main waitgroup for each switch waits for
@@ -149,21 +276,61 @@ func main() {
 
 		// go through each device and grab the counters.
 		for i, endpoint := range endpoints {
+			// figure out which method to run:
+			em := strings.Split(endpoint, ":")
+			if len(em) < 2 {
+				fmt.Println("Invalid input: ", endpoint)
+				fmt.Println("please export SP_ENDPOINTS=<name>:<method> where method is SNMP or NXAPI")
+				// don't wait for me any more.
+				mainWg.Add(-1)
+				// go to the next switch
+				continue
+			}
 			m := make(map[string]map[string]string)
-			go func(e string, c string, w sync.WaitGroup) {
-				defer mainWg.Done()
-				// mapping hash table for interface names.
-				w.Add(len(oidWork))
-				// concurrently execute all of the snmp walks
-				for oid, name := range oidWork {
-					go func(o string, n string) {
-						defer w.Done()
-						walkValue(e, c, o, n, m)
-					}(oid, name)
-				}
-				w.Wait()
-				processCollectedData(m)
-			}(endpoint, creds[i], wg[i])
+			if em[1] == "SNMP" {
+				go func(e string, c string, w sync.WaitGroup) {
+					defer mainWg.Done()
+					// mapping hash table for interface names.
+					w.Add(len(oidWork))
+					// concurrently execute all of the snmp walks
+					for oid, name := range oidWork {
+						go func(o string, n string) {
+							defer w.Done()
+							walkValue(e, c, o, n, m)
+						}(oid, name)
+					}
+					w.Wait()
+					processCollectedSNMPData(m)
+				}(em[0], creds[i], wg[i])
+			} else if em[1] == "NXAPI" {
+				// Yes.. this is hard to process, so let's walk through this.
+				// If this switch is an NXAPI endpoint, we are going to kick off a goroutine
+				// This go routine is going to call several commands against the switch.
+				go func(e string, cre string, w sync.WaitGroup) {
+					// When we finish processing all the commands against this switch, tell the main workGroup we are done.
+					defer mainWg.Done()
+
+					// we need to add a waitgroup for this task.
+					// This waitgroup is specific for this switch.
+					// We dont' want to wait for all the other switches to finish processing before
+					// sending the data to the cloud
+					w.Add(len(nxapiWork))
+					// Go through each command that we want to process.
+					for cmd, name := range nxapiWork {
+						// kick off a go routine for each of the commands we want to get
+						go func(c string, outputName string) {
+							// make sure we decrement the switch waitgroup.
+							defer w.Done()
+							// get the data.  This is where the work takes place.
+							getNXAPIData(e, c, outputName, cre, m)
+						}(cmd, name)
+					}
+					// wait for all the switch waitgroups to finish.
+					w.Wait()
+					// now we have all the data for this switch, let's process it.
+					processCollectedNXAPIData(m)
+				}(em[0], creds[i], wg[i])
+			}
 		}
 		// wait for all the snmpwalks to finish.
 		mainWg.Wait()
@@ -186,9 +353,13 @@ func main() {
 	}
 }
 
+// process NXAPI data
+func processCollectedNXAPIData(m map[string]map[string]string) {
+}
+
 // take all the data we were given and format it to JSON to send up
 // to the server.
-func processCollectedData(m map[string]map[string]string) {
+func processCollectedSNMPData(m map[string]map[string]string) {
 	// get the name of the switch:
 	sw := m["0"]["sysName"]
 	// get the timestamp
@@ -216,6 +387,7 @@ func processCollectedData(m map[string]map[string]string) {
 		sendStrings = append(sendStrings, sendMe)
 	}
 	sendMap[sw] = sendStrings
+	// Todo: Send this up to the main server.
 	fmt.Println(sendMap)
 }
 
