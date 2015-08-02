@@ -31,59 +31,6 @@ import (
 	"github.com/vallard/stickypipe-agent/nxapi"
 )
 
-/* These structures show the type of response we get back from
-The NXAPI.  This could be quite big.  The Output is the same up until the
-body.  That is where the outputs differ depending on which command is given.
-*/
-type NXAPI_Response struct {
-	Ins_api Ins_API
-}
-
-type Ins_API struct {
-	Type    string
-	Version string
-	Sid     string
-	Outputs map[string]Output
-}
-
-type Output struct {
-	Input string
-	Msg   string
-	Code  string
-	Body  map[string]interface{}
-}
-
-/*
-The following 3 structures are for our commands we send
-To the Nexus Switches
-*/
-type NXAPI_Post struct {
-	Ins_api NXAPI_Data
-}
-
-type NXAPI_Data struct {
-	Version       string
-	Type          string
-	Chunk         string
-	Sid           string
-	Input         string
-	Output_Format string
-}
-
-func NewNXAPIPost(command string) NXAPI_Post {
-	n := NXAPI_Post{
-		Ins_api: NXAPI_Data{
-			Version:       "1.0",
-			Type:          "cli_show",
-			Sid:           "1",
-			Chunk:         "0",
-			Input:         command,
-			Output_Format: "json",
-		},
-	}
-	return n
-}
-
 var mutex sync.Mutex
 
 func handleError(err error) {
@@ -145,20 +92,32 @@ func getNXAPIData(server string, command string, outputName string, creds string
 	//fmt.Println("response Headers: ", resp.Header)
 	body, err := ioutil.ReadAll(resp.Body)
 	//fmt.Println("responseBody:", string(body))
-	var rr NXAPI_Response
+	var rr nxapi.NXAPI_Response
 	//var rr interface{}
 	err = json.Unmarshal(body, &rr)
 	if err != nil {
 		log.Fatal("Error unmarshalling: ", err)
 	}
 	// Print out the raw string to debug.
-
-	//fmt.Println(rr)
-	outputs := rr.Ins_api.Outputs
-	fmt.Println(outputs)
-
-	v := nxapi.Version
-	fmt.Println(v)
+	for _, b := range rr.Ins_api.Outputs {
+		if b.Input == "show version" {
+			fmt.Println(b.Body)
+			fmt.Println(b.Body["host_name"])
+			/*
+				mutex.Lock()
+				{
+					if m[outputName] != nil {
+						m[outputName][key] = value
+					} else {
+						m[outputName] = b.Body["host_name"]
+					}
+				}
+				mutex.Unlock()
+			*/
+		}
+		//vers := nxapi.Version(b.Body)
+		//fmt.Println(vers.Host_Name)
+	}
 }
 
 /* walkvalues:

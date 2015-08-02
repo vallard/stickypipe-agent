@@ -1,13 +1,28 @@
 package nxapi
 
-type Version struct {
+/* These structures show the type of response we get back from
+The NXAPI.  This could be quite big.  The Output is the same up until the
+body.  That is where the outputs differ depending on which command is given.
+*/
+type NXAPI_Response struct {
+	Ins_api Ins_API
+}
+
+type Ins_API struct {
+	Type    string
+	Version string
+	Sid     string
+	Outputs map[string]Output
+}
+
+type Output struct {
 	Input string
 	Msg   string
 	Code  string
-	Body  VersionBody
+	Body  map[string]interface{}
 }
 
-type VersionBody struct {
+type Version struct {
 	Header_Str        string
 	Bios_Ver_Str      string
 	Kickstart_Ver_Str string
