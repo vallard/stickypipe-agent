@@ -44,7 +44,7 @@ Arguments:
  map - map we want to store this stuff.
 */
 
-func getNXAPIData(server string, command string, outputName string, creds string, m map[string]map[string]string) {
+func getNXAPIData(server string, command string, outputName string, creds string, m map[string]map[string]map[string]string) {
 	// argument for string looks like: admin:cisco where admin is the user and cisco is the password.
 	up := strings.Split(creds, ":")
 	// make sure that we parsed the username and password.
@@ -102,22 +102,29 @@ func getNXAPIData(server string, command string, outputName string, creds string
 	for _, b := range rr.Ins_api.Outputs {
 		if b.Input == "show version" {
 			fmt.Println(b.Body)
-			fmt.Println(b.Body["host_name"])
-			/*
-				mutex.Lock()
-				{
-					if m[outputName] != nil {
-						m[outputName][key] = value
-					} else {
-						m[outputName] = b.Body["host_name"]
-					}
+			n, ok := b.Body.(map[string]string)
+			//nxapi.NewVersion(n)
+
+			h, ok := b.Body["host_name"].(string)
+			if !ok {
+				continue
+			}
+			mutex.Lock()
+			{
+				if m[server] != nil {
+					m[server]["hostname"] = map[string]string{"host_name": "bar"}
+				} else {
+					m[server] = map[string]map[string]string{"hostname": map[string]string{"host_name": h}}
 				}
-				mutex.Unlock()
-			*/
+			}
+			mutex.Unlock()
+		} else if b.Input == "show interface counters" {
+
+			//fmt.Println(b.Body["TABLE_rx_counters"]["ROW_rx_counters"])
+			//fmt.Println(b.Body["TABLE_tx_counters"])
 		}
-		//vers := nxapi.Version(b.Body)
-		//fmt.Println(vers.Host_Name)
 	}
+	fmt.Println(m[server])
 }
 
 /* walkvalues:
@@ -128,7 +135,7 @@ func getNXAPIData(server string, command string, outputName string, creds string
 	key - the key we want to store the individual values
 	map - the map that we want to store this in.
 */
-func walkValue(server string, creds string, oid string, key string, m map[string]map[string]string) {
+func walkValue(server string, creds string, oid string, key string, m map[string]map[string]map[string]string) {
 	s, err := gosnmp.NewGoSNMP(server, creds, gosnmp.Version2c, 5)
 	if err != nil {
 		handleError(err)
@@ -157,10 +164,10 @@ func walkValue(server string, creds string, oid string, key string, m map[string
 			//fmt.Printf("%s / %s\n", key, value)
 			mutex.Lock()
 			{
-				if m[ifIndex] != nil {
-					m[ifIndex][key] = value
+				if m[server][ifIndex] != nil {
+					m[server][ifIndex][key] = value
 				} else {
-					m[ifIndex] = map[string]string{key: value}
+					m[server][ifIndex] = map[string]string{key: value}
 				}
 			}
 			mutex.Unlock()
@@ -245,7 +252,14 @@ func main() {
 				// go to the next switch
 				continue
 			}
-			m := make(map[string]map[string]string)
+			/* big map:
+			server {
+				interface {
+					key : value
+				}
+			}
+			*/
+			m := make(map[string]map[string]map[string]string)
 			if em[1] == "SNMP" {
 				go func(e string, c string, w sync.WaitGroup) {
 					defer mainWg.Done()
@@ -259,7 +273,7 @@ func main() {
 						}(oid, name)
 					}
 					w.Wait()
-					processCollectedSNMPData(m)
+					processCollectedSNMPData(m[e])
 				}(em[0], creds[i], wg[i])
 			} else if em[1] == "NXAPI" {
 				// Yes.. this is hard to process, so let's walk through this.
@@ -287,7 +301,7 @@ func main() {
 					// wait for all the switch waitgroups to finish.
 					w.Wait()
 					// now we have all the data for this switch, let's process it.
-					processCollectedNXAPIData(m)
+					processCollectedNXAPIData(m[e])
 				}(em[0], creds[i], wg[i])
 			}
 		}

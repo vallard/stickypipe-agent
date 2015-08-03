@@ -47,5 +47,13 @@ type Version struct {
 	Manufacturer      string
 }
 
+func NewVersion(m map[string]string) Version {
+
+	v := Version{
+		Host_Name: m["host_name"],
+	}
+	return v
+}
+
 type InterfaceCounters struct {
 }
