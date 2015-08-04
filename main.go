@@ -116,6 +116,7 @@ func getNXAPIData(server string, command string, outputName string, creds string
 			mutex.Unlock()
 		} else if b.Input == "show interface counters" {
 			interfaceCounters := nxapi.NewInterfaceCounters(b.Body)
+			fmt.Println(interfaceCounters)
 			//m[server]
 		}
 	}
