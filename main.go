@@ -101,10 +101,6 @@ func getNXAPIData(server string, command string, outputName string, creds string
 	// Print out the raw string to debug.
 	for _, b := range rr.Ins_api.Outputs {
 		if b.Input == "show version" {
-			fmt.Println(b.Body)
-			n, ok := b.Body.(map[string]string)
-			//nxapi.NewVersion(n)
-
 			h, ok := b.Body["host_name"].(string)
 			if !ok {
 				continue
@@ -119,12 +115,11 @@ func getNXAPIData(server string, command string, outputName string, creds string
 			}
 			mutex.Unlock()
 		} else if b.Input == "show interface counters" {
-
-			//fmt.Println(b.Body["TABLE_rx_counters"]["ROW_rx_counters"])
-			//fmt.Println(b.Body["TABLE_tx_counters"])
+			interfaceCounters := nxapi.NewInterfaceCounters(b.Body)
+			m[server]
 		}
 	}
-	fmt.Println(m[server])
+	//fmt.Println(m[server])
 }
 
 /* walkvalues:
