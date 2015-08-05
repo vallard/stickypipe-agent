@@ -44,7 +44,7 @@ Arguments:
  map - map we want to store this stuff.
 */
 
-func getNXAPIData(server string, command string, outputName string, creds string, m map[string]map[string]map[string]string) {
+func getNXAPIData(server string, command string, outputName string, creds string, m map[string]interface{}) {
 	// argument for string looks like: admin:cisco where admin is the user and cisco is the password.
 	up := strings.Split(creds, ":")
 	// make sure that we parsed the username and password.
@@ -100,27 +100,38 @@ func getNXAPIData(server string, command string, outputName string, creds string
 	}
 	// Print out the raw string to debug.
 	for _, b := range rr.Ins_api.Outputs {
+		// process show version
 		if b.Input == "show version" {
 			h, ok := b.Body["host_name"].(string)
 			if !ok {
 				continue
+			} else {
+				mutex.Lock()
+				{
+					if m[server] != nil {
+						p := m[server].(map[string]interface{})
+						p["hostname"] = h
+					} else {
+						m[server] = map[string]interface{}{"hostname": h}
+					}
+				}
+				mutex.Unlock()
 			}
+
+			// process show interface counters
+		} else if b.Input == "show interface counters" {
 			mutex.Lock()
 			{
 				if m[server] != nil {
-					m[server]["hostname"] = map[string]string{"host_name": "bar"}
+					p := m[server].(map[string]interface{})
+					p["InterfaceCounters"] = nxapi.NewInterfaceCounters(b.Body)
 				} else {
-					m[server] = map[string]map[string]string{"hostname": map[string]string{"host_name": h}}
+					m[server] = map[string]interface{}{"InterfaceCounters": nxapi.NewInterfaceCounters(b.Body)}
 				}
 			}
 			mutex.Unlock()
-		} else if b.Input == "show interface counters" {
-			interfaceCounters := nxapi.NewInterfaceCounters(b.Body)
-			fmt.Println(interfaceCounters)
-			//m[server]
 		}
 	}
-	//fmt.Println(m[server])
 }
 
 /* walkvalues:
@@ -131,6 +142,7 @@ func getNXAPIData(server string, command string, outputName string, creds string
 	key - the key we want to store the individual values
 	map - the map that we want to store this in.
 */
+
 func walkValue(server string, creds string, oid string, key string, m map[string]map[string]map[string]string) {
 	s, err := gosnmp.NewGoSNMP(server, creds, gosnmp.Version2c, 5)
 	if err != nil {
@@ -279,6 +291,7 @@ func main() {
 					// When we finish processing all the commands against this switch, tell the main workGroup we are done.
 					defer mainWg.Done()
 
+					nxapiHash := map[string]interface{}{}
 					// we need to add a waitgroup for this task.
 					// This waitgroup is specific for this switch.
 					// We dont' want to wait for all the other switches to finish processing before
@@ -291,13 +304,14 @@ func main() {
 							// make sure we decrement the switch waitgroup.
 							defer w.Done()
 							// get the data.  This is where the work takes place.
-							getNXAPIData(e, c, outputName, cre, m)
+							getNXAPIData(e, c, outputName, cre, nxapiHash)
 						}(cmd, name)
 					}
-					// wait for all the switch waitgroups to finish.
+					// wait for the threads on this goroutine to finish.
 					w.Wait()
+					// wait for all the switch waitgroups to finish.
 					// now we have all the data for this switch, let's process it.
-					processCollectedNXAPIData(m[e])
+					processCollectedNXAPIData(e, nxapiHash)
 				}(em[0], creds[i], wg[i])
 			}
 		}
@@ -323,7 +337,21 @@ func main() {
 }
 
 // process NXAPI data
-func processCollectedNXAPIData(m map[string]map[string]string) {
+func processCollectedNXAPIData(sw string, completeMap map[string]interface{}) {
+	fmt.Println("processing switch: ", sw)
+	for k, v := range completeMap[sw].(map[string]interface{}) {
+		fmt.Println("k: ", k)
+		switch v.(type) {
+		case string:
+			fmt.Println(v.(string))
+		case nxapi.InterfaceCounters:
+			ifaceCs := v.(nxapi.InterfaceCounters)
+			fmt.Println(ifaceCs.RX_Table.Row)
+			fmt.Println(ifaceCs.TX_Table.Row)
+		default:
+			fmt.Println("don't know what this is")
+		}
+	}
 }
 
 // take all the data we were given and format it to JSON to send up
