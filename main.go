@@ -339,19 +339,40 @@ func main() {
 // process NXAPI data
 func processCollectedNXAPIData(sw string, completeMap map[string]interface{}) {
 	fmt.Println("processing switch: ", sw)
+	swi := ""
+	counterData := []string{}
 	for k, v := range completeMap[sw].(map[string]interface{}) {
 		fmt.Println("k: ", k)
 		switch v.(type) {
 		case string:
-			fmt.Println(v.(string))
+			swi = v.(string)
 		case nxapi.InterfaceCounters:
 			ifaceCs := v.(nxapi.InterfaceCounters)
-			fmt.Println(ifaceCs.RX_Table.Row)
-			fmt.Println(ifaceCs.TX_Table.Row)
+			rx := ifaceCs.RX_Table.Row
+			tx := ifaceCs.TX_Table.Row
+			for port, _ := range rx {
+				sendMe := fmt.Sprintf("'iface':'%s', 'inpkts':'%f', 'inbytes':'%f','inucast':'%f','inmcast':'%f', 'inbcast': '%f','outpkts': '%f', 'outbytes':'%f', 'outucast':'%f', 'outmcast':'%f', 'outbcast':'%f'",
+					port,
+					rx[port].Eth_inpkts,
+					rx[port].Eth_inbytes,
+					rx[port].Eth_inucast,
+					rx[port].Eth_inmcast,
+					rx[port].Eth_inbcast,
+					tx[port].Eth_outpkts,
+					tx[port].Eth_outbytes,
+					tx[port].Eth_outucast,
+					tx[port].Eth_outmcast,
+					tx[port].Eth_outbcast,
+				)
+				counterData = append(counterData, sendMe)
+			}
+
 		default:
 			fmt.Println("don't know what this is")
 		}
 	}
+	// now that we're done, make all the turn this into JSON and send the string.
+	fmt.Printf("{ %s: { %s }}", sw, strings.Join(counterData, "},{"))
 }
 
 // take all the data we were given and format it to JSON to send up
